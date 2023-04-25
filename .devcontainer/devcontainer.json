@@ -3,7 +3,14 @@
 {
     "name": "ofx-parse",
     // Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-    "image": "mcr.microsoft.com/devcontainers/rust:0-1-bullseye"
+	"image": "mcr.microsoft.com/devcontainers/rust:0-1-bullseye",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"Swellaby.vscode-rust-test-adapter"
+			]
+		}
+	}
     // Use 'mounts' to make the cargo cache persistent in a Docker Volume.
     // "mounts": [
     // 	{
