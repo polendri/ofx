@@ -1,34 +1,39 @@
+//! Parsers for OFX SGML elements.
+
 use std::borrow::Cow;
 
 use nom::{
-    branch::{alt, permutation},
-    bytes::complete::{is_a, is_not, tag, take, take_until, take_while, take_while1},
-    character::complete::{anychar, line_ending, multispace1, not_line_ending, space0, u32},
-    combinator::{consumed, eof, fail, map, not, opt, peek, recognize, value},
-    error::{Error, ErrorKind},
-    multi::{many0, many_till},
+    branch::alt,
+    bytes::complete::{is_a, is_not, tag, take, take_until},
+    character::complete::multispace0,
+    combinator::{map, not, opt, peek, recognize, value},
+    error::ParseError,
+    multi::{many0, many0_count},
     sequence::{delimited, preceded, terminated, tuple},
-    Err, IResult,
+    IResult, Parser,
 };
 
-/// An OFX element.
-pub enum Element {
-    Ofx,
-    Unknown { tag: String, value: String },
-}
-
 /// Parses text devoid of special characters.
-fn normal_chars(input: &str) -> IResult<&str, &str> {
+fn normal_chars<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
     map(opt(is_not("<&")), |v| v.unwrap_or_default())(input)
 }
 
 /// Parses text devoid of special characters.
-fn normal_chars1(input: &str) -> IResult<&str, &str> {
+fn normal_chars1<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
     is_not("<&")(input)
 }
 
 /// Parses the name of a tag.
-fn tag_name(input: &str) -> IResult<&str, &str> {
+fn tag_name<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
     recognize(tuple((
         is_a("ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
         many0(is_a("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")),
@@ -36,29 +41,42 @@ fn tag_name(input: &str) -> IResult<&str, &str> {
 }
 
 /// Parses the start tag of an element.
-fn start_tag(input: &str) -> IResult<&str, &str> {
+fn any_start_tag<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
     delimited(tag("<"), tag_name, tag(">"))(input)
 }
 
 /// Parses a named start tag of an element.
-fn named_start_tag<'a>(name: &'a str) -> impl FnMut(&'a str) -> IResult<&'a str, &'a str> {
+fn start_tag<'a, E>(name: &'a str) -> impl FnMut(&'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
     delimited(tag("<"), tag(name), tag(">"))
 }
 
 /// Parses the end tag of an element.
-fn end_tag(input: &str) -> IResult<&str, &str> {
+fn any_end_tag<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
     delimited(tag("</"), tag_name, tag(">"))(input)
 }
 
 /// Parses a named end tag of an element.
-fn named_end_tag<'a>(name: &'a str) -> impl FnMut(&'a str) -> IResult<&'a str, &'a str> {
+fn end_tag<'a, E>(name: &'a str) -> impl FnMut(&'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
     delimited(tag("</"), tag(name), tag(">"))
 }
 
 /// Parses the value of an element.
-fn elem_value<'a>(input: &'a str) -> IResult<&'a str, Cow<'a, str>> {
-    // let (input, chunks) = alt((
-    //     value(Vec::new(), eof),
+fn elem_value<'a, E>(input: &'a str) -> IResult<&'a str, Cow<'a, str>, E>
+where
+    E: ParseError<&'a str>,
+{
     let (input, chunks) = many0(alt((
         normal_chars1,
         value("<", tag("&lt;")),
@@ -79,42 +97,96 @@ fn elem_value<'a>(input: &'a str) -> IResult<&'a str, Cow<'a, str>> {
     ))
 }
 
-/// Parses an element with an end tag into a (tag, value) pair.
-pub fn elem_with_end(input: &str) -> IResult<&str, (&str, &str)> {
-    terminated(tuple((start_tag, take_while(|c: char| c != '<'))), end_tag)(input)
+/// Parses an element that has no end tag and a text value within it.
+///
+/// Trims whitespace before running the provided parser for the contents.
+pub fn any_value_elem<'a, O, E, P>(
+    mut p: P,
+) -> impl FnMut(&'a str) -> IResult<&'a str, (&str, O), E>
+where
+    E: ParseError<&'a str>,
+    P: Parser<&'a str, O, E>,
+{
+    move |input: &str| {
+        let (input, name) = terminated(any_start_tag, multispace0)(input)?;
+        let (input, value) = p.parse(input)?;
+        Ok((input, (name, value)))
+    }
 }
 
-/// Parses an element without an end tag into a (tag, value) pair.
-pub fn elem_no_end(input: &str) -> IResult<&str, (&str, &str)> {
-    terminated(tuple((start_tag, not_line_ending)), alt((line_ending, eof)))(input)
+/// Parses a named element that has no end tag and a text value within it.
+///
+/// Trims whitespace before running the provided parser for the contents.
+pub fn value_elem<'a, O, E, P>(name: &'a str, p: P) -> impl FnMut(&'a str) -> IResult<&'a str, O, E>
+where
+    E: ParseError<&'a str>,
+    P: Parser<&'a str, O, E>,
+{
+    preceded(tuple((start_tag(name), multispace0)), p)
 }
 
-/// Parses an element into a (name, value) pair.
+/// Parses an element that has an end tag and other elements within it.
+///
+/// Trims whitespace before/after running the provided parser for the contents.
+pub fn any_group_elem<'a, O, E, P>(
+    mut p: P,
+) -> impl FnMut(&'a str) -> IResult<&'a str, (&'a str, O), E>
+where
+    E: ParseError<&'a str>,
+    P: Parser<&'a str, O, E>,
+{
+    move |input: &str| {
+        let (input, name) = terminated(any_start_tag, multispace0)(input)?;
+        let (input, value) = p.parse(input)?;
+        let (input, _) = tuple((multispace0, end_tag(name)))(input)?;
+        Ok((input, (name, value)))
+    }
+}
+
+/// Parses a named element that has an end tag and other elements within it.
+///
+/// Trims whitespace before/after running the provided parser for the contents.
+pub fn group_elem<'a, O, E, P>(name: &'a str, p: P) -> impl FnMut(&'a str) -> IResult<&'a str, O, E>
+where
+    E: ParseError<&'a str>,
+    P: Parser<&'a str, O, E>,
+{
+    delimited(
+        tuple((start_tag(name), multispace0)),
+        p,
+        tuple((multispace0, end_tag(name))),
+    )
+}
+
+/// Parses an unknown element into a `(name, value)` pair.
 ///
 /// Since the type of element defines whether it has an end tag in OFX, this necessarily has to take
-/// a guess. If the start tag is followed by any non-whitespace before the next line
-/// ending, then it is assumed not to have an end tag.
-pub fn elem<'a>(input: &'a str) -> IResult<&'a str, (&'a str, &'a str)> {
-    let (input, name) = start_tag(input)?;
-    let (remaining, value) = alt((
-        map(
-            consumed(preceded(
-                tuple((space0, line_ending)),
-                many_till(take(1u8), recognize(named_end_tag(name))),
-            )),
-            // consumed(tuple((
-            //     space0,
-            //     line_ending,
-            //     many_till(take(1u8), recognize(named_end_tag(name))),
-            // ))),
-            // `many_till()` includes the "till" parser in the result, no clean way to avoid that
-            // except to use `consumed()` to get both the parsed input and the end tag and slice
-            // the length of the end tag off the end
-            |(cs, (_, et)): (&str, (Vec<&str>, &str))| &cs[0..(cs.len() - et.len())],
-        ),
-        terminated(not_line_ending, line_ending),
-    ))(input)?;
-    Ok((remaining, (name, value)))
+/// a guess. If the start tag is followed by any non-whitespace text before the next element, then
+/// it is assumed not to have an end tag.
+pub fn elem<'a, E>(input: &'a str) -> IResult<&'a str, (&'a str, Cow<'a, str>), E>
+where
+    E: ParseError<&'a str>,
+{
+    let (input, name) = any_start_tag(input)?;
+    let (input, value) = elem_value(input)?;
+    let value = match value {
+        Cow::Borrowed(v) => Cow::Borrowed(v.trim()),
+        Cow::Owned(v) => Cow::Owned(String::from(v.trim())),
+    };
+
+    match value.len() {
+        0 => map(
+            terminated(
+                recognize(many0_count(tuple((
+                    not(peek(tuple((multispace0, end_tag(name))))),
+                    take(1u8),
+                )))),
+                tuple((multispace0, end_tag(name))),
+            ),
+            |value: &str| (name, Cow::Borrowed(value)),
+        )(input),
+        _ => Ok((input, (name, value))),
+    }
 }
 
 #[allow(non_snake_case)]
@@ -122,7 +194,10 @@ pub fn elem<'a>(input: &'a str) -> IResult<&'a str, (&'a str, &'a str)> {
 mod tests {
     use std::borrow::Cow;
 
-    use nom::error::{Error, ErrorKind};
+    use nom::{
+        bytes::complete::tag,
+        error::{Error, ErrorKind},
+    };
     use test_case::test_case;
 
     use crate::parsers::test_utils::{assert_parser, Expected};
@@ -166,7 +241,7 @@ mod tests {
     #[test_case("<AS DF>", Err(ErrorKind::Tag), " DF>"   ; "whitespace"         )]
     #[test_case("<ASDF>" , Ok("ASDF")         , ""       ; "valid tag"          )]
     fn start_tag(input: &str, expected: Expected<&str>, remaining: &str) {
-        assert_parser(super::start_tag, input, expected, remaining);
+        assert_parser(super::any_start_tag, input, expected, remaining);
     }
 
     #[test_case("ASDF"   , Err(ErrorKind::Tag), "ASDF"   ; "no delimiters"      )]
@@ -177,7 +252,7 @@ mod tests {
     #[test_case("<OTHER>", Err(ErrorKind::Tag), "OTHER>" ; "name mismatch"      )]
     #[test_case("<ASDF>" , Ok("ASDF")         , ""       ; "valid tag"          )]
     fn named_start_tag(input: &str, expected: Expected<&str>, remaining: &str) {
-        assert_parser(super::named_start_tag("ASDF"), input, expected, remaining);
+        assert_parser(super::start_tag("ASDF"), input, expected, remaining);
     }
 
     #[test_case("ASDF"   , Err(ErrorKind::Tag), "ASDF"    ; "no delimiters"        )]
@@ -188,7 +263,7 @@ mod tests {
     #[test_case("</AS DF>", Err(ErrorKind::Tag), " DF>"   ; "whitespace"           )]
     #[test_case("</ASDF>" , Ok("ASDF")         , ""       ; "valid tag"            )]
     fn end_tag(input: &str, expected: Expected<&str>, remaining: &str) {
-        assert_parser(super::end_tag, input, expected, remaining);
+        assert_parser(super::any_end_tag, input, expected, remaining);
     }
 
     #[test_case("ASDF"    , Err(ErrorKind::Tag), "ASDF"   ; "no delimiters"        )]
@@ -199,7 +274,7 @@ mod tests {
     #[test_case("</OTHER>", Err(ErrorKind::Tag), "OTHER>" ; "name mismatch"        )]
     #[test_case("</ASDF>" , Ok("ASDF")         , ""       ; "valid tag"            )]
     fn named_end_tag(input: &str, expected: Expected<&str>, remaining: &str) {
-        assert_parser(super::named_end_tag("ASDF"), input, expected, remaining);
+        assert_parser(super::end_tag("ASDF"), input, expected, remaining);
     }
 
     #[test_case(""                , Ok(Cow::from(""))    , ""   ; "eof"                        )]
@@ -220,48 +295,87 @@ mod tests {
         assert_parser(super::elem_value, input, expected, remaining);
     }
 
-    // #[test_case("<TAG>VALUE\r\n", Error::new("", ErrorKind::Tag) ; "no end tag")]
-    // #[test_case("VALUE</TAG>", Error::new("VALUE</TAG>", ErrorKind::Tag) ; "no start tag")]
-    // fn elem_with_end__invalid_elem__err(input: &str, expected: Error<&str>) {
-    //     assert_parser_err(elem_with_end, input, expected);
-    // }
+    #[test_case("value"             , Err(ErrorKind::Tag),  "value"    ; "no start tag"       )]
+    #[test_case("<TAG>value"        , Ok(("TAG", "value")), ""         ; "eof after value"    )]
+    #[test_case("<TAG> \r\n\tvaluex", Ok(("TAG", "value")), "x"        ; "leading whitespace" )]
+    #[test_case("<TAG>value \r\n\tx", Ok(("TAG", "value")), " \r\n\tx" ; "trailing whitespace")]
+    fn any_value_elem<'a>(
+        input: &'a str,
+        expected: Expected<(&'a str, &'a str)>,
+        remaining: &'a str,
+    ) {
+        assert_parser(
+            super::any_value_elem(tag("value")),
+            input,
+            expected,
+            remaining,
+        );
+    }
 
-    // #[test_case("<TAG></TAG>x", ("TAG", ""), "x" ; "empty value")]
-    // #[test_case("<TAG>VALUE</TAG>x", ("TAG", "VALUE"), "x" ; "no whitespace")]
-    // #[test_case("<TAG> VALUE </TAG>x", ("TAG", " VALUE "), "x" ; "whitespace")]
-    // #[test_case("<TAG>VAL\r\nUE\r\n</TAG>x", ("TAG", "VAL\r\nUE\r\n"), "x" ; "line endings")]
-    // fn elem_with_end__valid_elem__ok(input: &str, expected: (&str, &str), remaining: &str) {
-    //     assert_parser_ok(elem_with_end, input, expected, remaining)
-    // }
+    #[test_case("value"             , Err(ErrorKind::Tag), "value"    ; "no start tag"       )]
+    #[test_case("<NO>value"         , Err(ErrorKind::Tag), "NO>value" ; "name mismatch"      )]
+    #[test_case("<TAG>value"        , Ok("value")        , ""         ; "eof after value"    )]
+    #[test_case("<TAG> \r\n\tvaluex", Ok("value")        , "x"        ; "leading whitespace" )]
+    #[test_case("<TAG>value \r\n\tx", Ok("value")        , " \r\n\tx" ; "trailing whitespace")]
+    fn value_elem<'a>(input: &'a str, expected: Expected<&'a str>, remaining: &'a str) {
+        assert_parser(
+            super::value_elem("TAG", tag("value")),
+            input,
+            expected,
+            remaining,
+        );
+    }
 
-    // #[test]
-    // fn elem_no_end__no_start_tag__err() {
-    //     assert_parser_err(
-    //         elem_no_end,
-    //         "VALUE\r\n",
-    //         Error::new("VALUE\r\n", ErrorKind::Tag),
-    //     );
-    // }
+    #[test_case("value</TAG>"    , Err(ErrorKind::Tag), "value</TAG>"      ; "no start tag"   )]
+    #[test_case("<TAG>value"     , Err(ErrorKind::Tag), ""                 ; "no end tag"     )]
+    #[test_case("<TAG>value</NO>", Err(ErrorKind::Tag), "NO>"              ; "wrong end tag"  )]
+    #[test_case("<TAG>value</TAG>"        , Ok(("TAG", "value")), ""   ; "eof after end tag"  )]
+    #[test_case("<TAG> \r\n\tvalue</TAG>x", Ok(("TAG", "value")), "x"  ; "leading whitespace" )]
+    #[test_case("<TAG>value \r\n\t</TAG>x", Ok(("TAG", "value")), "x"  ; "trailing whitespace")]
+    fn any_group_elem<'a>(
+        input: &'a str,
+        expected: Expected<(&'a str, &'a str)>,
+        remaining: &'a str,
+    ) {
+        assert_parser(
+            super::any_group_elem(tag("value")),
+            input,
+            expected,
+            remaining,
+        );
+    }
 
-    // #[test_case("<TAG>", ("TAG", ""), "" ; "empty eof")]
-    // #[test_case("<TAG>\r\nx", ("TAG", ""), "x" ; "empty newline")]
-    // #[test_case("<TAG>VALUE</TAG>\r\nx", ("TAG", "VALUE</TAG>"), "x" ; "false end tag")]
-    // #[test_case("<TAG> VALUE \r\nx", ("TAG", " VALUE "), "x" ; "whitespace")]
-    // fn elem_no_end__valid_elem__ok(input: &str, expected: (&str, &str), remaining: &str) {
-    //     assert_parser_ok(elem_no_end, input, expected, remaining)
-    // }
+    #[test_case("value</TAG>"    , Err(ErrorKind::Tag),  "value</TAG>"   ; "no start tag"       )]
+    #[test_case("<TAG>value"     , Err(ErrorKind::Tag),  ""              ; "no end tag"         )]
+    #[test_case("<NO>value</NO>" , Err(ErrorKind::Tag),  "NO>value</NO>" ; "name mismatch"      )]
+    #[test_case("<TAG>value</NO>", Err(ErrorKind::Tag),  "NO>"           ; "wrong end tag"      )]
+    #[test_case("<TAG>value</TAG>"        , Ok("value"), ""              ; "eof after end tag"  )]
+    #[test_case("<TAG> \r\n\tvalue</TAG>x", Ok("value"), "x"             ; "leading whitespace" )]
+    #[test_case("<TAG>value \r\n\t</TAG>x", Ok("value"), "x"             ; "trailing whitespace")]
+    fn group_elem<'a>(input: &'a str, expected: Expected<&'a str>, remaining: &'a str) {
+        assert_parser(
+            super::group_elem("TAG", tag("value")),
+            input,
+            expected,
+            remaining,
+        );
+    }
 
-    // #[test]
-    // fn elem__no_start_tag__err() {
-    //     assert_parser_err(elem, "VALUE\r\n", Error::new("VALUE\r\n", ErrorKind::Tag));
-    // }
-
-    // #[test_case("<TAG>VALUE", ("TAG", "VALUE"), "" ; "ended by eof")]
-    // #[test_case("<TAG></TAG>", ("TAG", ""), "" ; "empty with end tag")]
-    // #[test_case("<TAG> VALUE\r\nx", ("TAG", " VALUE"), "x" ; "ended by newline")]
-    // #[test_case("<TAG>VALUE</TAG>\r\nx", ("TAG", "VALUE"), "\r\nx" ; "with end tag")]
-    // #[test_case("<TAG>VALUE\r\n  <WITH>INNER\r\n</TAG>x", ("TAG", "VALUE\r\n  <WITH>INNER\r\n"), "x" ; "with inner tag")]
-    // fn elem__valid_elem__ok(input: &str, expected: (&str, &str), remaining: &str) {
-    //     assert_parser_ok(elem, input, expected, remaining)
-    // }
+    #[test_case("<TAG>value"        , Ok(("TAG", Cow::from("value")))  , "" ; "noend tag with eof")]
+    #[test_case(
+        "<TAG> value\r\n",
+        Ok(("TAG", Cow::from("value"))),
+        "" ;
+        "noend tag with whitespace"
+    )]
+    #[test_case("<TAG><F></F></TAG>", Ok(("TAG", Cow::from("<F></F>"))), "" ; "tag with inner tag")]
+    #[test_case(
+        "<TAG>\r\n  <F></F>\r\n</TAG>",
+        Ok(("TAG", Cow::from("<F></F>"))),
+        "" ;
+        "tag with inner tag and whitespace"
+    )]
+    fn elem<'a>(input: &'a str, expected: Expected<(&'a str, Cow<'a, str>)>, remaining: &'a str) {
+        assert_parser(super::elem, input, expected, remaining);
+    }
 }

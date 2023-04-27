@@ -3,6 +3,7 @@ use nom::{
     bytes::complete::tag,
     character::complete::{line_ending, not_line_ending, u32},
     combinator::{map, value},
+    error::ParseError,
     sequence::{delimited, tuple},
     IResult,
 };
@@ -65,7 +66,10 @@ pub struct OfxHeader {
 }
 
 /// Parses the `OFXHEADER` header element.
-fn header_version_elem(input: &str) -> IResult<&str, Warn<u32>> {
+fn header_version_elem<'a, E>(input: &'a str) -> IResult<&'a str, Warn<u32>, E>
+where
+    E: ParseError<&'a str>,
+{
     let (input, version) = delimited(tag("OFXHEADER:"), u32, line_ending)(input)?;
     Ok((
         input,
@@ -81,7 +85,10 @@ fn header_version_elem(input: &str) -> IResult<&str, Warn<u32>> {
 }
 
 /// Parses the `DATA` header element.
-fn data_elem(input: &str) -> IResult<&str, Warn<OfxContentType>> {
+fn data_elem<'a, E>(input: &'a str) -> IResult<&'a str, Warn<OfxContentType>, E>
+where
+    E: ParseError<&'a str>,
+{
     delimited(
         tag("DATA:"),
         alt((
@@ -96,7 +103,10 @@ fn data_elem(input: &str) -> IResult<&str, Warn<OfxContentType>> {
 }
 
 /// Parses the `VERSION` header element.
-fn version_elem(input: &str) -> IResult<&str, Warn<u32>> {
+fn version_elem<'a, E>(input: &'a str) -> IResult<&'a str, Warn<u32>, E>
+where
+    E: ParseError<&'a str>,
+{
     let expected_versions = [102, 151, 160];
     let (input, version) = delimited(tag("VERSION:"), u32, line_ending)(input)?;
     Ok((
@@ -113,7 +123,10 @@ fn version_elem(input: &str) -> IResult<&str, Warn<u32>> {
 }
 
 /// Parses the `SECURITY` header element.
-fn security_elem(input: &str) -> IResult<&str, Warn<OfxSecurity>> {
+fn security_elem<'a, E>(input: &'a str) -> IResult<&'a str, Warn<OfxSecurity>, E>
+where
+    E: ParseError<&'a str>,
+{
     delimited(
         tag("SECURITY:"),
         alt((
@@ -129,7 +142,10 @@ fn security_elem(input: &str) -> IResult<&str, Warn<OfxSecurity>> {
 }
 
 /// Parses the `ENCODING` header element.
-fn encoding_elem(input: &str) -> IResult<&str, OfxEncoding> {
+fn encoding_elem<'a, E>(input: &'a str) -> IResult<&'a str, OfxEncoding, E>
+where
+    E: ParseError<&'a str>,
+{
     delimited(
         tag("ENCODING:"),
         alt((
@@ -141,7 +157,10 @@ fn encoding_elem(input: &str) -> IResult<&str, OfxEncoding> {
 }
 
 /// Parses the `CHARSET` header element.
-fn charset_elem(input: &str) -> IResult<&str, Warn<OfxCharset>> {
+fn charset_elem<'a, E>(input: &'a str) -> IResult<&'a str, Warn<OfxCharset>, E>
+where
+    E: ParseError<&'a str>,
+{
     delimited(
         tag("CHARSET:"),
         alt((
@@ -158,22 +177,34 @@ fn charset_elem(input: &str) -> IResult<&str, Warn<OfxCharset>> {
 }
 
 /// Parses the `COMPRESSION` header element.
-fn compression_elem(input: &str) -> IResult<&str, &str> {
+fn compression_elem<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
     delimited(tag("COMPRESSION:"), not_line_ending, line_ending)(input)
 }
 
 /// Parses the `OLDFILEUID` header element.
-fn old_file_uid_elem(input: &str) -> IResult<&str, &str> {
+fn old_file_uid_elem<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
     delimited(tag("OLDFILEUID:"), not_line_ending, line_ending)(input)
 }
 
 /// Parses the `NEWFILEUID` header element.
-fn new_file_uid_elem(input: &str) -> IResult<&str, &str> {
+fn new_file_uid_elem<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
     delimited(tag("NEWFILEUID:"), not_line_ending, line_ending)(input)
 }
 
 /// Parses the header of an OFX document.
-pub fn ofx_header(input: &str) -> IResult<&str, Warn<OfxHeader>> {
+pub fn ofx_header<'a, E>(input: &'a str) -> IResult<&'a str, Warn<OfxHeader>, E>
+where
+    E: ParseError<&'a str>,
+{
     let (
         input,
         (

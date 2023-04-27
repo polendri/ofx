@@ -3,9 +3,13 @@
 mod element;
 mod ofx_header;
 
-use nom::IResult;
+use nom::multi::many0;
+use nom::sequence::tuple;
+use nom::{character::complete::multispace0, IResult};
 
-pub use self::ofx_header::{ofx_header, OfxHeader};
+use self::element::{elem, group_elem};
+use self::ofx_header::ofx_header;
+pub use self::ofx_header::OfxHeader;
 use crate::error::Warn;
 
 /// An OFX response document.
@@ -13,20 +17,38 @@ use crate::error::Warn;
 pub struct OfxResponse {
     /// The header section of the document.
     pub header: OfxHeader,
+    /// TODO
+    pub ofx: String,
 }
 
 pub fn ofx_response(input: &str) -> IResult<&str, Warn<OfxResponse>> {
     let (
         input,
-        Warn {
-            value: header,
-            warnings: header_warnings,
-        },
-    ) = ofx_header(input)?;
+        (
+            _,
+            Warn {
+                value: header,
+                warnings: header_warnings,
+            },
+            _,
+            ofx,
+            _,
+        ),
+    ) = tuple((
+        multispace0,
+        ofx_header,
+        multispace0,
+        group_elem("OFX", many0(elem)),
+        multispace0,
+    ))(input)?;
+
     Ok((
         input,
         Warn {
-            value: OfxResponse { header },
+            value: OfxResponse {
+                header,
+                ofx: String::from("TODO"),
+            },
             warnings: [header_warnings].concat(),
         },
     ))
