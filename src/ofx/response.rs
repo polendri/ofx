@@ -1,12 +1,12 @@
-use crate::models::ofx_header::OfxHeader;
+use crate::ofx::header::OfxHeader;
 
 /// An OFX response document.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OfxResponse {
+pub struct OfxResponse<'a> {
     /// The header section of the document.
-    pub header: OfxHeader,
+    pub header: OfxHeader<'a>,
     /// TODO
-    pub ofx: String,
+    pub ofx: &'a str,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

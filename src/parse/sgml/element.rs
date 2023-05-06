@@ -6,9 +6,9 @@ use nom::{
     branch::alt,
     bytes::complete::{is_a, is_not, tag, take, take_until},
     character::complete::multispace0,
-    combinator::{map, not, opt, peek, recognize, value},
+    combinator::{eof, map, not, opt, peek, recognize, value, verify},
     error::ParseError,
-    multi::{many0, many0_count},
+    multi::{many0, many0_count, many_till},
     sequence::{delimited, preceded, terminated, tuple},
     IResult, Parser,
 };
@@ -26,7 +26,7 @@ fn normal_chars1<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
 where
     E: ParseError<&'a str>,
 {
-    is_not("<&")(input)
+    is_not("<>&")(input)
 }
 
 /// Parses the name of a tag.
@@ -41,7 +41,7 @@ where
 }
 
 /// Parses the start tag of an element.
-fn any_start_tag<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
+pub(crate) fn any_start_tag<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
 where
     E: ParseError<&'a str>,
 {
@@ -49,7 +49,7 @@ where
 }
 
 /// Parses a named start tag of an element.
-fn start_tag<'a, E>(name: &'a str) -> impl FnMut(&'a str) -> IResult<&'a str, &'a str, E>
+pub(crate) fn start_tag<'a, E>(name: &'a str) -> impl FnMut(&'a str) -> IResult<&'a str, &'a str, E>
 where
     E: ParseError<&'a str>,
 {
@@ -57,7 +57,7 @@ where
 }
 
 /// Parses the end tag of an element.
-fn any_end_tag<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
+pub(crate) fn any_end_tag<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
 where
     E: ParseError<&'a str>,
 {
@@ -65,7 +65,7 @@ where
 }
 
 /// Parses a named end tag of an element.
-fn end_tag<'a, E>(name: &'a str) -> impl FnMut(&'a str) -> IResult<&'a str, &'a str, E>
+pub(crate) fn end_tag<'a, E>(name: &'a str) -> impl FnMut(&'a str) -> IResult<&'a str, &'a str, E>
 where
     E: ParseError<&'a str>,
 {
@@ -73,34 +73,48 @@ where
 }
 
 /// Parses the value of an element.
-fn elem_value<'a, E>(input: &'a str) -> IResult<&'a str, Cow<'a, str>, E>
+pub(crate) fn elem_value<'a, E>(input: &'a str) -> IResult<&'a str, Vec<&'a str>, E>
 where
     E: ParseError<&'a str>,
 {
-    let (input, chunks) = many0(alt((
-        normal_chars1,
+    const CDATA_END: &str = "]]>";
+
+    let escaped = alt::<_, _, E, _>((
         value("<", tag("&lt;")),
         value(">", tag("&gt;")),
         value("&", tag("&amp;")),
         value(" ", tag("&nbsp;")),
-        delimited(tag("<![CDATA["), take_until("]]>"), tag("]]>")),
-        tag("&"),
-    )))(input)?;
+        delimited(tag("<![CDATA["), take_until(CDATA_END), tag(CDATA_END)),
+    ));
 
-    Ok((
-        input,
-        match chunks.len() {
-            0 => Cow::Borrowed(""),
-            1 => Cow::Borrowed(chunks[0]),
-            _ => Cow::Owned(chunks.concat()),
-        },
-    ))
+    many0(alt((
+        value("<", tag("&lt;")),
+        value(">", tag("&gt;")),
+        value("&", tag("&amp;")),
+        value(" ", tag("&nbsp;")),
+        delimited(tag("<![CDATA["), take_until(CDATA_END), tag(CDATA_END)),
+        verify(
+            recognize(many_till(
+                take(1u8),
+                peek(alt((
+                    tag("<"),
+                    tag("&lt;"),
+                    tag("&gt;"),
+                    tag("&amp;"),
+                    tag("&nbsp;"),
+                    delimited(tag("<![CDATA["), take_until(CDATA_END), tag(CDATA_END)),
+                    eof,
+                ))),
+            )),
+            |o: &str| !o.is_empty(),
+        ),
+    )))(input)
 }
 
 /// Parses an element that has no end tag and a text value within it.
 ///
 /// Trims whitespace before running the provided parser for the contents.
-pub fn any_value_elem<'a, O, E, P>(
+pub(crate) fn any_value_elem<'a, O, E, P>(
     mut p: P,
 ) -> impl FnMut(&'a str) -> IResult<&'a str, (&str, O), E>
 where
@@ -117,7 +131,10 @@ where
 /// Parses a named element that has no end tag and a text value within it.
 ///
 /// Trims whitespace before running the provided parser for the contents.
-pub fn value_elem<'a, O, E, P>(name: &'a str, p: P) -> impl FnMut(&'a str) -> IResult<&'a str, O, E>
+pub(crate) fn value_elem<'a, O, E, P>(
+    name: &'a str,
+    p: P,
+) -> impl FnMut(&'a str) -> IResult<&'a str, O, E>
 where
     E: ParseError<&'a str>,
     P: Parser<&'a str, O, E>,
@@ -128,7 +145,7 @@ where
 /// Parses an element that has an end tag and other elements within it.
 ///
 /// Trims whitespace before/after running the provided parser for the contents.
-pub fn any_group_elem<'a, O, E, P>(
+pub(crate) fn any_group_elem<'a, O, E, P>(
     mut p: P,
 ) -> impl FnMut(&'a str) -> IResult<&'a str, (&'a str, O), E>
 where
@@ -146,7 +163,10 @@ where
 /// Parses a named element that has an end tag and other elements within it.
 ///
 /// Trims whitespace before/after running the provided parser for the contents.
-pub fn group_elem<'a, O, E, P>(name: &'a str, p: P) -> impl FnMut(&'a str) -> IResult<&'a str, O, E>
+pub(crate) fn group_elem<'a, O, E, P>(
+    name: &'a str,
+    p: P,
+) -> impl FnMut(&'a str) -> IResult<&'a str, O, E>
 where
     E: ParseError<&'a str>,
     P: Parser<&'a str, O, E>,
@@ -163,19 +183,22 @@ where
 /// Since the type of element defines whether it has an end tag in OFX, this necessarily has to take
 /// a guess. If the start tag is followed by any non-whitespace text before the next element, then
 /// it is assumed not to have an end tag.
-pub fn elem<'a, E>(input: &'a str) -> IResult<&'a str, (&'a str, Cow<'a, str>), E>
+pub(crate) fn any_elem<'a, E>(input: &'a str) -> IResult<&'a str, (&'a str, Vec<&'a str>), E>
 where
     E: ParseError<&'a str>,
 {
     let (input, name) = any_start_tag(input)?;
-    let (input, value) = elem_value(input)?;
-    let value = match value {
-        Cow::Borrowed(v) => Cow::Borrowed(v.trim()),
-        Cow::Owned(v) => Cow::Owned(String::from(v.trim())),
-    };
+    let (input, mut value) = elem_value(input)?;
+    if !value.is_empty() {
+        value[0] = value[0].trim_start();
+        let value_len = value.len();
+        value[value_len - 1] = value[value_len - 1].trim_end();
+    }
 
-    match value.len() {
-        0 => map(
+    if !value.is_empty() && !value[0].is_empty() {
+        Ok((input, (name, value)))
+    } else {
+        map(
             terminated(
                 recognize(many0_count(tuple((
                     not(peek(tuple((multispace0, end_tag(name))))),
@@ -183,9 +206,8 @@ where
                 )))),
                 tuple((multispace0, end_tag(name))),
             ),
-            |value: &str| (name, Cow::Borrowed(value)),
-        )(input),
-        _ => Ok((input, (name, value))),
+            |value: &str| (name, vec![value]),
+        )(input)
     }
 }
 
@@ -194,13 +216,10 @@ where
 mod tests {
     use std::borrow::Cow;
 
-    use nom::{
-        bytes::complete::tag,
-        error::{Error, ErrorKind},
-    };
+    use nom::{bytes::complete::tag, error::ErrorKind};
     use test_case::test_case;
 
-    use crate::parsers::test_utils::{assert_parser, Expected};
+    use crate::parse::test_utils::{assert_parser, Expected};
 
     #[test_case(""                   , Ok("")                   , ""   ; "eof"                   )]
     #[test_case("<"                  , Ok("")                   , "<"  ; "first is angle bracket")]
@@ -277,21 +296,20 @@ mod tests {
         assert_parser(super::end_tag("ASDF"), input, expected, remaining);
     }
 
-    #[test_case(""                , Ok(Cow::from(""))    , ""   ; "eof"                        )]
-    #[test_case("<"               , Ok(Cow::from(""))    , "<"  ; "left angle bracket"         )]
-    #[test_case("&"               , Ok(Cow::from("&"))   , ""   ; "ampersand"                  )]
-    #[test_case("&lt;"            , Ok(Cow::from("<"))   , ""   ; "escaped left angle bracket" )]
-    #[test_case("&gt;"            , Ok(Cow::from(">"))   , ""   ; "escaped right angle bracket")]
-    #[test_case("&amp;"           , Ok(Cow::from("&"))   , ""   ; "escaped ampersand"          )]
-    #[test_case("&nbsp;"          , Ok(Cow::from(" "))   , ""   ; "escaped space"              )]
-    #[test_case("a1A!&lt;b2B@&gt;", Ok(Cow::from("a1A!<b2B@>")), "" ; "mixed escapes"          )]
-    #[test_case("a&lt;<x"         , Ok(Cow::from("a<"))  , "<x" ; "escaped then left angle"    )]
-    #[test_case("&lt;a<x"         , Ok(Cow::from("<a"))  , "<x" ; "normal then left angle"     )]
-    #[test_case("a&lt;&x"         , Ok(Cow::from("a<&x")), ""   ; "escaped then ampersand"     )]
-    #[test_case("&lt;a&x"         , Ok(Cow::from("<a&x")), ""   ; "normal then ampersand"      )]
-    #[test_case("&lt;&gt;&nbsp;"  , Ok(Cow::from("<> ")) , ""   ; "repeated escapes"           )]
-    #[test_case("&&&&"            , Ok(Cow::from("&&&&")), ""   ; "repeated ampersands"        )]
-    fn elem_value<'a>(input: &'a str, expected: Expected<Cow<'a, str>>, remaining: &'a str) {
+    #[test_case(""                , Ok(vec![])              , ""   ; "eof"          )]
+    #[test_case("&lt;"            , Ok(vec!["<"])           , ""   ; "escaped left angle bracket" )]
+    #[test_case("&gt;"            , Ok(vec![">"])           , ""   ; "escaped right angle bracket")]
+    #[test_case("&amp;"           , Ok(vec!["&"])           , ""   ; "escaped ampersand"          )]
+    #[test_case("&nbsp;"          , Ok(vec![" "])           , ""   ; "escaped space"              )]
+    #[test_case("<![CDATA[<>& []a1A!]]>", Ok(vec!["<>& []a1A!"]), ""   ; "escaped cdata"          )]
+    #[test_case("a1A!&lt;b2B@&gt;", Ok(vec!["a1A!", "<", "b2B@", ">"]), "" ; "mixed escapes"      )]
+    #[test_case("a&lt;<x"         , Ok(vec!["a", "<"])      , "<x" ; "escaped then left angle"    )]
+    #[test_case("&lt;a<x"         , Ok(vec!["<", "a"])      , "<x" ; "normal then left angle"     )]
+    #[test_case("a&lt;&x"         , Ok(vec!["a", "<", "&x"]), ""   ; "escaped then ampersand"     )]
+    #[test_case("&lt;a&x"         , Ok(vec!["<", "a&x"])    , ""   ; "normal then ampersand"      )]
+    #[test_case("&lt;&gt;&nbsp;"  , Ok(vec!["<", ">", " "]) , ""   ; "repeated escapes"           )]
+    #[test_case("&&&&"            , Ok(vec!["&&&&"])        , ""   ; "repeated ampersands"        )]
+    fn elem_value<'a>(input: &'a str, expected: Expected<Vec<&'a str>>, remaining: &'a str) {
         assert_parser(super::elem_value, input, expected, remaining);
     }
 
@@ -361,21 +379,25 @@ mod tests {
         );
     }
 
-    #[test_case("<TAG>value"        , Ok(("TAG", Cow::from("value")))  , "" ; "noend tag with eof")]
+    #[test_case("<TAG>value"        , Ok(("TAG", vec!["value"]))  , "" ; "noend tag with eof")]
     #[test_case(
         "<TAG> value\r\n",
-        Ok(("TAG", Cow::from("value"))),
+        Ok(("TAG", vec!["value"])),
         "" ;
         "noend tag with whitespace"
     )]
-    #[test_case("<TAG><F></F></TAG>", Ok(("TAG", Cow::from("<F></F>"))), "" ; "tag with inner tag")]
+    #[test_case("<TAG><F></F></TAG>", Ok(("TAG", vec!["<F></F>"])), "" ; "tag with inner tag")]
     #[test_case(
         "<TAG>\r\n  <F></F>\r\n</TAG>",
-        Ok(("TAG", Cow::from("<F></F>"))),
+        Ok(("TAG", vec!["<F></F>"])),
         "" ;
         "tag with inner tag and whitespace"
     )]
-    fn elem<'a>(input: &'a str, expected: Expected<(&'a str, Cow<'a, str>)>, remaining: &'a str) {
-        assert_parser(super::elem, input, expected, remaining);
+    fn any_elem<'a>(
+        input: &'a str,
+        expected: Expected<(&'a str, Vec<&'a str>)>,
+        remaining: &'a str,
+    ) {
+        assert_parser(super::any_elem, input, expected, remaining);
     }
 }

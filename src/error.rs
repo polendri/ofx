@@ -1,38 +1,51 @@
-use thiserror::Error;
+use std::fmt;
 
-#[derive(Clone, Debug, Error, PartialEq)]
-pub enum OfxParseWarning {
-    #[error("unrecognized OFXHEADER value `{0}`")]
-    UnrecognizedOfxHeaderVersion(u32),
-    #[error("unrecognized DATA value `{0}`")]
-    UnrecognizedContentType(String),
-    #[error("unrecognized VERSION value `{0}`")]
-    UnrecognizedVersion(u32),
-    #[error("unrecognized SECURITY value `{0}`")]
-    UnrecognizedSecurityType(String),
-    #[error("unrecognized CHARSET value `{0}`")]
-    UnrecognizedCharset(String),
+use nom::{
+    error::{convert_error, VerboseError},
+    Err,
+};
+use serde::de;
+use thiserror::Error as ThisError;
+
+#[derive(Clone, Debug, PartialEq, ThisError)]
+pub enum Error {
+    #[error("trailing input remaining")]
+    TrailingInput,
+    #[error("parse error")]
+    ParseError(String),
+    #[error("parser expected more data")]
+    ParseIncomplete,
+    #[error("unknown error")]
+    Unknown(String),
 }
 
-/// Augments a value with a list of `OfxParseWarning` values, indicating recoverable warnings which
-/// occurred during parsing.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Warn<T>
-where
-    T: Clone + std::fmt::Debug + PartialEq,
-{
-    pub value: T,
-    pub warnings: Vec<OfxParseWarning>,
-}
+// impl From<nom::Err<nom::error::VerboseError<&str>>> for Error {
+//     fn from(e: nom::Err<nom::error::VerboseError<&str>>) -> Self {
+//         match e {
+//             Err::Incomplete(_) => Error::ParseIncomplete,
+//             Err::Error(e) | Err::Failure(e) => {
+//                 let foo = convert_error(e);
+//                 Error::ParseError(String::from("TODO"))
+//             }
+//         }
+//     }
+// }
 
-impl<T> From<T> for Warn<T>
-where
-    T: Clone + std::fmt::Debug + PartialEq,
-{
-    fn from(value: T) -> Self {
-        Warn {
-            value,
-            warnings: Vec::new(),
+impl de::Error for Error {
+    #[cold]
+    fn custom<T: fmt::Display>(msg: T) -> Error {
+        Error::Unknown(format!("{}", msg))
+    }
+
+    #[cold]
+    fn invalid_type(unexp: de::Unexpected, exp: &dyn de::Expected) -> Self {
+        if let de::Unexpected::Unit = unexp {
+            Error::custom(format_args!("invalid type: null, expected {}", exp))
+        } else {
+            Error::custom(format_args!("invalid type: {}, expected {}", unexp, exp))
         }
     }
 }
+
+/// Alias for a `Result` with the error type `ofx::Error`.
+pub type Result<T> = core::result::Result<T, Error>;

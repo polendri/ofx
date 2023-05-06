@@ -1,5 +1,6 @@
+mod de;
 mod error;
-pub mod models;
-pub mod parsers;
+pub mod ofx;
+mod parse;
 
-pub use error::OfxParseWarning;
+pub use error::{Error, Result};

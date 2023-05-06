@@ -1,89 +1,104 @@
 use nom::{
     branch::{alt, permutation},
-    bytes::complete::tag,
+    bytes::complete::{is_a, tag},
     character::complete::{line_ending, not_line_ending, u32},
-    combinator::{map, value},
+    combinator::{map, recognize, value},
     error::ParseError,
-    sequence::{delimited, tuple},
-    IResult,
+    multi::many0_count,
+    sequence::{terminated, tuple},
+    IResult, Parser,
 };
 
-use crate::error::{OfxParseWarning, Warn};
-use crate::models::ofx_header::*;
+use crate::ofx::header::*;
 
-/// Parses the `OFXHEADER` header element.
-fn header_version_elem<'a, E>(input: &'a str) -> IResult<&'a str, Warn<u32>, E>
+/// Parses a header element name.
+fn elem_name<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
 where
     E: ParseError<&'a str>,
 {
-    let (input, version) = delimited(tag("OFXHEADER:"), u32, line_ending)(input)?;
-    Ok((
-        input,
-        Warn {
-            value: version,
-            warnings: if version == 100 {
-                Vec::new()
-            } else {
-                vec![OfxParseWarning::UnrecognizedOfxHeaderVersion(version)]
-            },
-        },
-    ))
+    recognize(tuple((
+        is_a("ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
+        many0_count(is_a("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")),
+    )))(input)
+}
+
+/// Parses a header element value.
+fn elem_value<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
+    not_line_ending(input)
+}
+
+/// Parses an unknown element.
+fn any_elem<'a, E>(input: &'a str) -> IResult<&'a str, (&'a str, &'a str), E>
+where
+    E: ParseError<&'a str>,
+{
+    tuple((
+        terminated(elem_name, tag(":")),
+        terminated(elem_value, line_ending),
+    ))(input)
+}
+
+/// Parses an element.
+fn elem<'a, O, E, P>(name: &'a str, mut p: P) -> impl FnMut(&'a str) -> IResult<&'a str, O, E>
+where
+    E: ParseError<&'a str>,
+    P: Parser<&'a str, O, E>,
+{
+    move |input: &str| {
+        let (input, _) = terminated(tag(name), tag(":"))(input)?;
+        let (input, value) = p.parse(input)?;
+        let (input, _) = line_ending(input)?;
+        Ok((input, value))
+    }
+}
+
+/// Parses the `OFXHEADER` header element.
+fn header_version_elem<'a, E>(input: &'a str) -> IResult<&'a str, u32, E>
+where
+    E: ParseError<&'a str>,
+{
+    elem("OFXHEADER", u32)(input)
 }
 
 /// Parses the `DATA` header element.
-fn data_elem<'a, E>(input: &'a str) -> IResult<&'a str, Warn<OfxContentType>, E>
+fn data_elem<'a, E>(input: &'a str) -> IResult<&'a str, OfxContentType, E>
 where
     E: ParseError<&'a str>,
 {
-    delimited(
-        tag("DATA:"),
+    elem(
+        "DATA",
         alt((
-            value(Warn::from(OfxContentType::OfxSgml), tag("OFXSGML")),
-            map(not_line_ending, |v: &str| Warn {
-                value: OfxContentType::Unknown(String::from(v)),
-                warnings: vec![OfxParseWarning::UnrecognizedContentType(String::from(v))],
+            value(OfxContentType::OfxSgml, tag("OFXSGML")),
+            map(not_line_ending, |v| {
+                OfxContentType::Unknown(String::from(v))
             }),
         )),
-        line_ending,
     )(input)
 }
 
 /// Parses the `VERSION` header element.
-fn version_elem<'a, E>(input: &'a str) -> IResult<&'a str, Warn<u32>, E>
+fn version_elem<'a, E>(input: &'a str) -> IResult<&'a str, u32, E>
 where
     E: ParseError<&'a str>,
 {
-    let expected_versions = [102, 151, 160];
-    let (input, version) = delimited(tag("VERSION:"), u32, line_ending)(input)?;
-    Ok((
-        input,
-        Warn {
-            value: version,
-            warnings: if expected_versions.contains(&version) {
-                Vec::new()
-            } else {
-                vec![OfxParseWarning::UnrecognizedVersion(version)]
-            },
-        },
-    ))
+    elem("VERSION", u32)(input)
 }
 
 /// Parses the `SECURITY` header element.
-fn security_elem<'a, E>(input: &'a str) -> IResult<&'a str, Warn<OfxSecurity>, E>
+fn security_elem<'a, E>(input: &'a str) -> IResult<&'a str, OfxSecurity, E>
 where
     E: ParseError<&'a str>,
 {
-    delimited(
-        tag("SECURITY:"),
+    elem(
+        "SECURITY",
         alt((
-            value(Warn::from(OfxSecurity::None), tag("NONE")),
-            value(Warn::from(OfxSecurity::Type1), tag("TYPE1")),
-            map(not_line_ending, |v: &str| Warn {
-                value: OfxSecurity::Unknown(String::from(v)),
-                warnings: vec![OfxParseWarning::UnrecognizedSecurityType(String::from(v))],
-            }),
+            value(OfxSecurity::None, tag("NONE")),
+            value(OfxSecurity::Type1, tag("TYPE1")),
+            map(not_line_ending, |v| OfxSecurity::Unknown(String::from(v))),
         )),
-        line_ending,
     )(input)
 }
 
@@ -92,33 +107,28 @@ fn encoding_elem<'a, E>(input: &'a str) -> IResult<&'a str, OfxEncoding, E>
 where
     E: ParseError<&'a str>,
 {
-    delimited(
-        tag("ENCODING:"),
+    elem(
+        "ENCODING",
         alt((
             value(OfxEncoding::UsAscii, tag("USASCII")),
             value(OfxEncoding::Utf8, tag("UTF-8")),
         )),
-        line_ending,
     )(input)
 }
 
 /// Parses the `CHARSET` header element.
-fn charset_elem<'a, E>(input: &'a str) -> IResult<&'a str, Warn<OfxCharset>, E>
+fn charset_elem<'a, E>(input: &'a str) -> IResult<&'a str, OfxCharset, E>
 where
     E: ParseError<&'a str>,
 {
-    delimited(
-        tag("CHARSET:"),
+    elem(
+        "CHARSET",
         alt((
-            value(Warn::from(OfxCharset::Latin1), tag("ISO-8859-1")),
-            value(Warn::from(OfxCharset::WindowsLatin1), tag("1252")),
-            value(Warn::from(OfxCharset::None), tag("NONE")),
-            map(not_line_ending, |v: &str| Warn {
-                value: OfxCharset::Unknown(String::from(v)),
-                warnings: vec![OfxParseWarning::UnrecognizedCharset(String::from(v))],
-            }),
+            value(OfxCharset::Latin1, tag("ISO-8859-1")),
+            value(OfxCharset::WindowsLatin1, tag("1252")),
+            value(OfxCharset::None, tag("NONE")),
+            map(not_line_ending, |v| OfxCharset::Unknown(String::from(v))),
         )),
-        line_ending,
     )(input)
 }
 
@@ -127,7 +137,7 @@ fn compression_elem<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
 where
     E: ParseError<&'a str>,
 {
-    delimited(tag("COMPRESSION:"), not_line_ending, line_ending)(input)
+    elem("COMPRESSION", not_line_ending)(input)
 }
 
 /// Parses the `OLDFILEUID` header element.
@@ -135,7 +145,7 @@ fn old_file_uid_elem<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
 where
     E: ParseError<&'a str>,
 {
-    delimited(tag("OLDFILEUID:"), not_line_ending, line_ending)(input)
+    elem("OLDFILEUID", not_line_ending)(input)
 }
 
 /// Parses the `NEWFILEUID` header element.
@@ -143,43 +153,19 @@ fn new_file_uid_elem<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
 where
     E: ParseError<&'a str>,
 {
-    delimited(tag("NEWFILEUID:"), not_line_ending, line_ending)(input)
+    elem("NEWFILEUID", not_line_ending)(input)
 }
 
 /// Parses the header of an OFX document.
-pub fn ofx_header<'a, E>(input: &'a str) -> IResult<&'a str, Warn<OfxHeader>, E>
+pub(crate) fn ofx_header<'a, E>(input: &'a str) -> IResult<&'a str, OfxHeader<'a>, E>
 where
     E: ParseError<&'a str>,
 {
     let (
         input,
         (
-            Warn {
-                value: header_version,
-                warnings: header_version_warnings,
-            },
-            (
-                Warn {
-                    value: data,
-                    warnings: data_warnings,
-                },
-                Warn {
-                    value: version,
-                    warnings: version_warnings,
-                },
-                Warn {
-                    value: security,
-                    warnings: security_warnings,
-                },
-                encoding,
-                Warn {
-                    value: charset,
-                    warnings: charset_warnings,
-                },
-                compression,
-                old_file_uid,
-                new_file_uid,
-            ),
+            header_version,
+            (data, version, security, encoding, charset, compression, old_file_uid, new_file_uid),
         ),
     ) = tuple((
         header_version_elem,
@@ -197,26 +183,16 @@ where
 
     Ok((
         input,
-        Warn {
-            value: OfxHeader {
-                header_version,
-                data,
-                version,
-                security,
-                encoding,
-                charset,
-                compression: String::from(compression),
-                old_file_uid: String::from(old_file_uid),
-                new_file_uid: String::from(new_file_uid),
-            },
-            warnings: [
-                header_version_warnings,
-                data_warnings,
-                version_warnings,
-                security_warnings,
-                charset_warnings,
-            ]
-            .concat(),
+        OfxHeader {
+            header_version,
+            data,
+            version,
+            security,
+            encoding,
+            charset,
+            compression,
+            old_file_uid,
+            new_file_uid,
         },
     ))
 }
@@ -227,84 +203,93 @@ mod tests {
     use nom::error::ErrorKind;
     use test_case::test_case;
 
-    use crate::error::{OfxParseWarning, Warn};
-    use crate::parsers::test_utils::{assert_parser, Expected};
+    use crate::parse::test_utils::{assert_parser, Expected};
 
     use super::*;
+
+    #[test_case(""          , Err(ErrorKind::IsA), ""      ; "eof"           )]
+    #[test_case(":"         , Err(ErrorKind::IsA), ":"     ; "empty"         )]
+    #[test_case("1SDF:"     , Err(ErrorKind::IsA), "1SDF:" ; "leading digit" )]
+    #[test_case("ASD1:"     , Ok("ASD1")         , ":"     ; "trailing digit")]
+    #[test_case("OFXHEADER:", Ok("OFXHEADER")    , ":"     ; "known value"   )]
+    #[test_case(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:",
+        Ok("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"),
+        ":" ;
+        "all allowed chars"
+    )]
+    fn elem_name(input: &str, expected: Expected<&str>, remaining: &str) {
+        assert_parser(super::elem_name, input, expected, remaining);
+    }
+
+    #[test_case(""             , Err(ErrorKind::IsA), ""              ; "eof"          )]
+    #[test_case(":VAL\r\nx"    , Err(ErrorKind::IsA), ":VAL\r\nx"     ; "empty name"   )]
+    #[test_case("1AME:VAL\r\nx", Err(ErrorKind::IsA), "1AME:VAL\r\nx" ; "leading digit")]
+    #[test_case("NAME:\r\nx"   , Ok(("NAME", ""))   , "x"             ; "empty value"  )]
+    #[test_case("NAME:VAL\r\nx", Ok(("NAME", "VAL")), "x"             ; "text value"   )]
+    #[test_case(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:VAL\r\nx",
+        Ok(("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", "VAL")),
+        "x" ;
+        "all allowed name chars"
+    )]
+    fn any_elem(input: &str, expected: Expected<(&str, &str)>, remaining: &str) {
+        assert_parser(super::any_elem, input, expected, remaining);
+    }
+
+    #[test_case(""             , Err(ErrorKind::Tag), ""              ; "eof"           )]
+    #[test_case(":VAL\r\nx"    , Err(ErrorKind::Tag), ":VAL\r\nx"     ; "empty name"    )]
+    #[test_case("NOPE:VAL\r\nx", Err(ErrorKind::Tag), "NOPE:VAL\r\nx" ; "name mismatch" )]
+    #[test_case("NAME:\r\nx"   , Err(ErrorKind::Tag), "\r\nx"         ; "value mismatch")]
+    #[test_case("NAME:VAL\r\nx", Ok("VAL")          , "x"             ; "matched value" )]
+    fn elem(input: &str, expected: Expected<&str>, remaining: &str) {
+        assert_parser(super::elem("NAME", tag("VAL")), input, expected, remaining);
+    }
 
     #[test_case("ASDF:100\r\n"      , Err(ErrorKind::Tag)  , "ASDF:100\r\n" ; "invalid tag"  )]
     #[test_case("OFXHEADER:\r\n"    , Err(ErrorKind::Digit), "\r\n"         ; "empty value"  )]
     #[test_case("OFXHEADER:ASDF\r\n", Err(ErrorKind::Digit), "ASDF\r\n"     ; "invalid value")]
-    #[test_case(
-        "OFXHEADER:999\r\n",
-        Ok(Warn {
-            value: 999,
-            warnings: vec![OfxParseWarning::UnrecognizedOfxHeaderVersion(999)],
-        }),
-        "" ;
-        "unknown value"
-    )]
-    #[test_case("OFXHEADER:100\r\n" , Ok(Warn::from(100))  , ""             ; "known value"  )]
-    fn header_version_elem(input: &str, expected: Expected<Warn<u32>>, remaining: &str) {
+    #[test_case("OFXHEADER:100\r\n" , Ok(100)              , ""             ; "valid value"  )]
+    fn header_version_elem(input: &str, expected: Expected<u32>, remaining: &str) {
         assert_parser(super::header_version_elem, input, expected, remaining);
     }
 
-    #[test_case("ASDF:OFXSGML\r\n", Err(ErrorKind::Tag), "ASDF:OFXSGML\r\n" ; "invalid tag"  )]
+    #[test_case("ASDF:OFXSGML\r\n", Err(ErrorKind::Tag), "ASDF:OFXSGML\r\n" ; "invalid tag")]
     #[test_case(
         "DATA:ofxsgml\r\n",
-        Ok(Warn {
-            value: OfxContentType::Unknown(String::from("ofxsgml")),
-            warnings: vec![OfxParseWarning::UnrecognizedContentType(String::from("ofxsgml"))],
-        }),
+        Ok(OfxContentType::Unknown(String::from("ofxsgml"))),
         "" ;
         "unknown value"
     )]
-    #[test_case("DATA:OFXSGML\r\n" , Ok(Warn::from(OfxContentType::OfxSgml)), "" ; "known value"  )]
-    fn data_elem(input: &str, expected: Expected<Warn<OfxContentType>>, remaining: &str) {
+    #[test_case("DATA:OFXSGML\r\n", Ok(OfxContentType::OfxSgml), "" ; "known value")]
+    fn data_elem(input: &str, expected: Expected<OfxContentType>, remaining: &str) {
         assert_parser(super::data_elem, input, expected, remaining);
     }
 
     #[test_case("ASDF:100\r\n"    , Err(ErrorKind::Tag)  , "ASDF:100\r\n" ; "invalid tag"  )]
     #[test_case("VERSION:\r\n"    , Err(ErrorKind::Digit), "\r\n"         ; "empty value"  )]
     #[test_case("VERSION:ASDF\r\n", Err(ErrorKind::Digit), "ASDF\r\n"     ; "invalid value")]
-    #[test_case(
-        "VERSION:101\r\n",
-        Ok(Warn {
-            value: 101,
-            warnings: vec![OfxParseWarning::UnrecognizedVersion(101)],
-        }),
-        "" ;
-        "unknown value"
-    )]
-    #[test_case("VERSION:102\r\n" , Ok(Warn::from(102))  , ""             ; "known value 102")]
-    #[test_case("VERSION:151\r\n" , Ok(Warn::from(151))  , ""             ; "known value 151")]
-    #[test_case("VERSION:160\r\n" , Ok(Warn::from(160))  , ""             ; "known value 160")]
-    fn version_elem(input: &str, expected: Expected<Warn<u32>>, remaining: &str) {
+    #[test_case("VERSION:102\r\n" , Ok(102)              , ""             ; "valid value"  )]
+    fn version_elem(input: &str, expected: Expected<u32>, remaining: &str) {
         assert_parser(super::version_elem, input, expected, remaining);
     }
 
     #[test_case("ASDF:NONE\r\n", Err(ErrorKind::Tag), "ASDF:NONE\r\n" ; "invalid tag")]
     #[test_case(
         "SECURITY:\r\n",
-        Ok(Warn {
-            value: OfxSecurity::Unknown(String::from("")),
-            warnings: vec![OfxParseWarning::UnrecognizedSecurityType(String::from(""))],
-        }),
+        Ok(OfxSecurity::Unknown(String::from(""))),
         "" ;
         "empty"
     )]
     #[test_case(
         "SECURITY:type1\r\n",
-        Ok(Warn {
-            value: OfxSecurity::Unknown(String::from("type1")),
-            warnings: vec![OfxParseWarning::UnrecognizedSecurityType(String::from("type1"))],
-        }),
+        Ok(OfxSecurity::Unknown(String::from("type1"))),
         "" ;
         "unknown value"
     )]
-    #[test_case("SECURITY:NONE\r\n" , Ok(Warn::from(OfxSecurity::None)),  "" ; "known value none" )]
-    #[test_case("SECURITY:TYPE1\r\n", Ok(Warn::from(OfxSecurity::Type1)), "" ; "known value type1")]
-    fn security_elem(input: &str, expected: Expected<Warn<OfxSecurity>>, remaining: &str) {
+    #[test_case("SECURITY:NONE\r\n" , Ok(OfxSecurity::None),  "" ; "known value none" )]
+    #[test_case("SECURITY:TYPE1\r\n", Ok(OfxSecurity::Type1), "" ; "known value type1")]
+    fn security_elem(input: &str, expected: Expected<OfxSecurity>, remaining: &str) {
         assert_parser(super::security_elem, input, expected, remaining);
     }
 
@@ -370,25 +355,17 @@ mod tests {
          COMPRESSION:\r\n\
          OLDFILEUID:ASDF4\r\n\
          NEWFILEUID:ASDF5\r\n",
-        Ok(Warn {
-            value: OfxHeader {
+        Ok(OfxHeader {
                 header_version: 999,
                 data: OfxContentType::Unknown(String::from("ASDF1")),
                 version: 101,
                 security: OfxSecurity::Unknown(String::from("ASDF2")),
                 encoding: OfxEncoding::UsAscii,
                 charset: OfxCharset::Unknown(String::from("ASDF3")),
-                compression: String::new(),
-                old_file_uid: String::from("ASDF4"),
-                new_file_uid: String::from("ASDF5"),
-            },
-            warnings: vec![
-                OfxParseWarning::UnrecognizedOfxHeaderVersion(999),
-                OfxParseWarning::UnrecognizedContentType(String::from("ASDF1")),
-                OfxParseWarning::UnrecognizedVersion(101),
-                OfxParseWarning::UnrecognizedSecurityType(String::from("ASDF2")),
-                OfxParseWarning::UnrecognizedCharset(String::from("ASDF3")),
-            ],
+                compression: "",
+                old_file_uid: "ASDF4",
+                new_file_uid: "ASDF5",
+
         }),
         "" ;
         "propagates warnings"
@@ -403,17 +380,17 @@ mod tests {
          COMPRESSION:\r\n\
          OLDFILEUID:OLD\r\n\
          NEWFILEUID:NEW\r\nx",
-        Ok(Warn::from(OfxHeader {
+        Ok(OfxHeader {
             header_version: 100,
             data: OfxContentType::OfxSgml,
             version: 102,
             security: OfxSecurity::None,
             encoding: OfxEncoding::UsAscii,
             charset: OfxCharset::WindowsLatin1,
-            compression: String::new(),
-            old_file_uid: String::from("OLD"),
-            new_file_uid: String::from("NEW"),
-        })),
+            compression: "",
+            old_file_uid: "OLD",
+            new_file_uid: "NEW",
+        }),
         "x" ;
         "valid ordered header"
     )]
@@ -428,21 +405,21 @@ mod tests {
          DATA:OFXSGML\r\n\
          NEWFILEUID:NEW\r\n\
          SECURITY:NONE\r\nx",
-        Ok(Warn::from(OfxHeader {
+        Ok(OfxHeader {
             header_version: 100,
             data: OfxContentType::OfxSgml,
             version: 102,
             security: OfxSecurity::None,
             encoding: OfxEncoding::UsAscii,
             charset: OfxCharset::WindowsLatin1,
-            compression: String::new(),
-            old_file_uid: String::from("OLD"),
-            new_file_uid: String::from("NEW"),
-        })),
+            compression: "",
+            old_file_uid: "OLD",
+            new_file_uid: "NEW",
+        }),
         "x" ;
         "valid out-of-order header"
     )]
-    fn ofx_header(input: &str, expected: Expected<Warn<OfxHeader>>, remaining: &str) {
+    fn ofx_header(input: &str, expected: Expected<OfxHeader>, remaining: &str) {
         assert_parser(super::ofx_header, input, expected, remaining);
     }
 }

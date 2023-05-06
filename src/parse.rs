@@ -1,6 +1,25 @@
 //! Parsers for OFX documents.
 
+use std::ops::Deref;
+
+use nom::{
+    error::{convert_error, VerboseError},
+    Err, Parser,
+};
+
+use crate::error::{Error, Result};
+
 pub mod sgml;
+
+pub(crate) fn wrap_nom<'a, O, P>(mut p: P, input: &'a str) -> Result<(&'a str, O)>
+where
+    P: Parser<&'a str, O, VerboseError<&'a str>>,
+{
+    p.parse(input).map_err(|e| match e {
+        Err::Incomplete(_) => Error::ParseIncomplete,
+        Err::Error(e) | Err::Failure(e) => Error::ParseError(convert_error(input, e)),
+    })
+}
 
 #[allow(non_snake_case)]
 #[cfg(test)]
