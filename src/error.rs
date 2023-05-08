@@ -1,14 +1,14 @@
 use std::fmt;
 
-use nom::{
-    error::{convert_error, VerboseError},
-    Err,
-};
 use serde::de;
 use thiserror::Error as ThisError;
 
 #[derive(Clone, Debug, PartialEq, ThisError)]
 pub enum Error {
+    #[error("expected borrowed str is invalid due to escape sequences in the input")]
+    InvalidBorrowedStr,
+    #[error("only unit and pair tuples are supported")]
+    InvalidTupleLength,
     #[error("trailing input remaining")]
     TrailingInput,
     #[error("parse error")]
@@ -18,18 +18,6 @@ pub enum Error {
     #[error("unknown error")]
     Unknown(String),
 }
-
-// impl From<nom::Err<nom::error::VerboseError<&str>>> for Error {
-//     fn from(e: nom::Err<nom::error::VerboseError<&str>>) -> Self {
-//         match e {
-//             Err::Incomplete(_) => Error::ParseIncomplete,
-//             Err::Error(e) | Err::Failure(e) => {
-//                 let foo = convert_error(e);
-//                 Error::ParseError(String::from("TODO"))
-//             }
-//         }
-//     }
-// }
 
 impl de::Error for Error {
     #[cold]

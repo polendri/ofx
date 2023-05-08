@@ -1,7 +1,5 @@
 //! Parsers for OFX SGML elements.
 
-use std::borrow::Cow;
-
 use nom::{
     branch::alt,
     bytes::complete::{is_a, is_not, tag, take, take_until},
@@ -12,6 +10,22 @@ use nom::{
     sequence::{delimited, preceded, terminated, tuple},
     IResult, Parser,
 };
+
+/// Consumes whitespace before and after the provided parser.
+pub(crate) fn whitespace_delimited<'a, O, E, P>(
+    mut p: P,
+) -> impl FnMut(&'a str) -> IResult<&'a str, O, E>
+where
+    E: ParseError<&'a str>,
+    P: Parser<&'a str, O, E>,
+{
+    move |input: &str| {
+        let (input, _) = multispace0(input)?;
+        let (input, value) = p.parse(input)?;
+        let (input, _) = multispace0(input)?;
+        Ok((input, value))
+    }
+}
 
 /// Parses text devoid of special characters.
 fn normal_chars<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
@@ -78,14 +92,6 @@ where
     E: ParseError<&'a str>,
 {
     const CDATA_END: &str = "]]>";
-
-    let escaped = alt::<_, _, E, _>((
-        value("<", tag("&lt;")),
-        value(">", tag("&gt;")),
-        value("&", tag("&amp;")),
-        value(" ", tag("&nbsp;")),
-        delimited(tag("<![CDATA["), take_until(CDATA_END), tag(CDATA_END)),
-    ));
 
     many0(alt((
         value("<", tag("&lt;")),
@@ -214,8 +220,6 @@ where
 #[allow(non_snake_case)]
 #[cfg(test)]
 mod tests {
-    use std::borrow::Cow;
-
     use nom::{bytes::complete::tag, error::ErrorKind};
     use test_case::test_case;
 
