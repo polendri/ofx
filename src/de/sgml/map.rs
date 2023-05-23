@@ -4,7 +4,7 @@ use serde::de::{self, value::BorrowedStrDeserializer, DeserializeSeed};
 use super::Deserializer;
 use crate::error::{Error, Result};
 use crate::parse::sgml::element::end_tag;
-use crate::parse::sgml::element::{any_end_tag, any_start_tag, whitespace_delimited};
+use crate::parse::sgml::element::{any_end_tag, any_start_tag, whitespace_preceded};
 
 /// Implementor of the serde `MapAccess` trait for OFX.
 pub(super) struct MapAccess<'a, 'de: 'a, 'h: 'a> {
@@ -34,7 +34,7 @@ impl<'a, 'de, 'h> de::MapAccess<'de> for MapAccess<'a, 'de, 'h> {
     {
         debug_assert!(self.strip_outer || self.tag.is_none());
 
-        if self.de.peek(whitespace_delimited(any_end_tag)).is_some() {
+        if self.de.peek(whitespace_preceded(any_end_tag)).is_some() {
             return Ok(None);
         }
 
@@ -70,7 +70,7 @@ impl<'a, 'de, 'h> de::MapAccess<'de> for MapAccess<'a, 'de, 'h> {
 
         if !self.strip_outer {
             let tag = self.tag.take().unwrap();
-            self.de.consume(tuple((multispace0, opt(end_tag(tag)))))?;
+            self.de.consume(opt(tuple((multispace0, end_tag(tag)))))?;
         }
 
         Ok(value)

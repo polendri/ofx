@@ -3,18 +3,16 @@ use serde::de::{self, DeserializeSeed};
 
 use super::Deserializer;
 use crate::error::{Error, Result};
-use crate::parse::{
-    sgml::element::{any_end_tag, whitespace_delimited},
-    use_nom_opt,
-};
+use crate::parse::sgml::element::{any_end_tag, whitespace_preceded};
 
 pub(super) struct SeqAccess<'a, 'de: 'a, 'h: 'a> {
     de: &'a mut Deserializer<'de, 'h>,
+    len: Option<usize>,
 }
 
 impl<'a, 'de, 'h> SeqAccess<'a, 'de, 'h> {
-    pub fn new(de: &'a mut Deserializer<'de, 'h>) -> Self {
-        SeqAccess { de }
+    pub fn new(de: &'a mut Deserializer<'de, 'h>, len: Option<usize>) -> Self {
+        SeqAccess { de, len }
     }
 }
 
@@ -25,9 +23,21 @@ impl<'a, 'de, 'h> de::SeqAccess<'de> for SeqAccess<'a, 'de, 'h> {
     where
         T: DeserializeSeed<'de>,
     {
-        if use_nom_opt(whitespace_delimited(alt((any_end_tag, eof))), self.de.input).is_some() {
-            Ok(None)
+        if let Some(0) = self.len {
+            return Ok(None);
+        }
+
+        if self
+            .de
+            .peek(whitespace_preceded(alt((any_end_tag, eof))))
+            .is_some()
+        {
+            match self.len {
+                Some(n) if n > 0 => Err(Error::InvalidTupleLength),
+                _ => Ok(None),
+            }
         } else {
+            self.len = self.len.map(|n| n - 1);
             seed.deserialize(&mut *self.de).map(Some)
         }
     }

@@ -4,13 +4,6 @@ use nom::{error::Error as BriefError, Parser};
 
 pub mod sgml;
 
-pub(crate) fn use_nom_opt<'a, O, P>(mut p: P, input: &'a str) -> Option<(&'a str, O)>
-where
-    P: Parser<&'a str, O, BriefError<&'a str>>,
-{
-    p.parse(input).ok()
-}
-
 #[allow(non_snake_case)]
 #[cfg(test)]
 pub mod test_utils {
