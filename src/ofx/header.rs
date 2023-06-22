@@ -1,48 +1,33 @@
-use serde::Deserialize;
-use serde_enum_str::Deserialize_enum_str;
-
-#[derive(Clone, Debug, Deserialize_enum_str, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum OfxContentType {
-    #[serde(rename = "OFXSGML")]
     OfxSgml,
-    #[serde(other)]
     Unknown(String),
 }
 
-#[derive(Clone, Debug, Deserialize_enum_str, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum OfxSecurity {
-    #[serde(rename = "NONE")]
     None,
-    #[serde(rename = "TYPE1")]
     Type1,
-    #[serde(other)]
     Unknown(String),
 }
 
-#[derive(Clone, Debug, Deserialize_enum_str, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum OfxEncoding {
-    #[serde(rename = "USASCII")]
     UsAscii,
-    #[serde(rename = "UTF-8")]
     Utf8,
-    #[serde(other)]
     Unknown(String),
 }
 
-#[derive(Clone, Debug, Deserialize_enum_str, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum OfxCharset {
-    #[serde(rename = "ISO-8859-1")]
     Latin1,
-    #[serde(rename = "1252")]
     WindowsLatin1,
-    #[serde(rename = "NONE")]
     None,
-    #[serde(other)]
     Unknown(String),
 }
 
 /// The header segment of an OFX document.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct OfxHeader<'a> {
     /// The version of the header portion of the document. `100` is the only valid value; other
     /// values are tolerated, yielding a warning.

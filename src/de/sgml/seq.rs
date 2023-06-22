@@ -11,7 +11,7 @@ pub(super) struct SeqAccess<'a, 'de: 'a, 'h: 'a> {
 }
 
 impl<'a, 'de, 'h> SeqAccess<'a, 'de, 'h> {
-    pub fn new(de: &'a mut Deserializer<'de, 'h>, len: Option<usize>) -> Self {
+    pub(super) fn new(de: &'a mut Deserializer<'de, 'h>, len: Option<usize>) -> Self {
         SeqAccess { de, len }
     }
 }

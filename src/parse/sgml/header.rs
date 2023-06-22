@@ -1,45 +1,14 @@
 use nom::{
     branch::{alt, permutation},
-    bytes::complete::{is_a, tag},
+    bytes::complete::tag,
     character::complete::{line_ending, not_line_ending, u32},
-    combinator::{map, recognize, value},
+    combinator::{map, value},
     error::ParseError,
-    multi::many0_count,
     sequence::{terminated, tuple},
     IResult, Parser,
 };
 
 use crate::ofx::header::*;
-
-/// Parses a header element name.
-fn elem_name<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
-where
-    E: ParseError<&'a str>,
-{
-    recognize(tuple((
-        is_a("ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
-        many0_count(is_a("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")),
-    )))(input)
-}
-
-/// Parses a header element value.
-fn elem_value<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
-where
-    E: ParseError<&'a str>,
-{
-    not_line_ending(input)
-}
-
-/// Parses an unknown element.
-fn any_elem<'a, E>(input: &'a str) -> IResult<&'a str, (&'a str, &'a str), E>
-where
-    E: ParseError<&'a str>,
-{
-    tuple((
-        terminated(elem_name, tag(":")),
-        terminated(elem_value, line_ending),
-    ))(input)
-}
 
 /// Parses an element.
 fn elem<'a, O, E, P>(name: &'a str, mut p: P) -> impl FnMut(&'a str) -> IResult<&'a str, O, E>
@@ -206,36 +175,6 @@ mod tests {
     use crate::parse::test_utils::{assert_parser, Expected};
 
     use super::*;
-
-    #[test_case(""          , Err(ErrorKind::IsA), ""      ; "eof"           )]
-    #[test_case(":"         , Err(ErrorKind::IsA), ":"     ; "empty"         )]
-    #[test_case("1SDF:"     , Err(ErrorKind::IsA), "1SDF:" ; "leading digit" )]
-    #[test_case("ASD1:"     , Ok("ASD1")         , ":"     ; "trailing digit")]
-    #[test_case("OFXHEADER:", Ok("OFXHEADER")    , ":"     ; "known value"   )]
-    #[test_case(
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:",
-        Ok("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"),
-        ":" ;
-        "all allowed chars"
-    )]
-    fn elem_name(input: &str, expected: Expected<&str>, remaining: &str) {
-        assert_parser(super::elem_name, input, expected, remaining);
-    }
-
-    #[test_case(""             , Err(ErrorKind::IsA), ""              ; "eof"          )]
-    #[test_case(":VAL\r\nx"    , Err(ErrorKind::IsA), ":VAL\r\nx"     ; "empty name"   )]
-    #[test_case("1AME:VAL\r\nx", Err(ErrorKind::IsA), "1AME:VAL\r\nx" ; "leading digit")]
-    #[test_case("NAME:\r\nx"   , Ok(("NAME", ""))   , "x"             ; "empty value"  )]
-    #[test_case("NAME:VAL\r\nx", Ok(("NAME", "VAL")), "x"             ; "text value"   )]
-    #[test_case(
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:VAL\r\nx",
-        Ok(("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", "VAL")),
-        "x" ;
-        "all allowed name chars"
-    )]
-    fn any_elem(input: &str, expected: Expected<(&str, &str)>, remaining: &str) {
-        assert_parser(super::any_elem, input, expected, remaining);
-    }
 
     #[test_case(""             , Err(ErrorKind::Tag), ""              ; "eof"           )]
     #[test_case(":VAL\r\nx"    , Err(ErrorKind::Tag), ":VAL\r\nx"     ; "empty name"    )]

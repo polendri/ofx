@@ -1,7 +1,5 @@
 //! Parsers for OFX documents.
 
-use nom::{error::Error as BriefError, Parser};
-
 pub mod sgml;
 
 #[allow(non_snake_case)]

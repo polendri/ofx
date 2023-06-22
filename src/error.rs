@@ -24,18 +24,8 @@ pub enum Error {
 }
 
 impl de::Error for Error {
-    #[cold]
     fn custom<T: fmt::Display>(msg: T) -> Error {
         Error::Unknown(format!("{}", msg))
-    }
-
-    #[cold]
-    fn invalid_type(unexp: de::Unexpected, exp: &dyn de::Expected) -> Self {
-        if let de::Unexpected::Unit = unexp {
-            Error::custom(format_args!("invalid type: null, expected {}", exp))
-        } else {
-            Error::custom(format_args!("invalid type: {}, expected {}", unexp, exp))
-        }
     }
 }
 

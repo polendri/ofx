@@ -5,8 +5,8 @@ mod sum;
 use std::borrow::Cow;
 
 use nom::{
-    character::complete::{anychar, i16, i32, i64, i8, multispace0, u16, u32, u64, u8},
-    combinator::{map, opt},
+    character::complete::{anychar, i16, i32, i64, i8, u16, u32, u64, u8},
+    combinator::opt,
     error::{convert_error, Error as BriefError, VerboseError},
     number::complete::{double, float},
     Err, Parser,
@@ -17,22 +17,19 @@ use serde::{
     forward_to_deserialize_any,
 };
 
-use self::map::MapAccess;
-use self::seq::SeqAccess;
-use self::sum::EnumAccess;
-use crate::ofx::header::*;
-use crate::ofx::Ofx;
-use crate::parse::sgml::element::end_tag;
+use self::{map::MapAccess, seq::SeqAccess, sum::EnumAccess};
 use crate::parse::sgml::{
-    element::{elem_value, whitespace_preceded},
+    element::{elem_value, end_tag, whitespace_preceded},
     header::ofx_header,
 };
 use crate::{
     error::{Error, Result},
+    ofx::{header::*, Ofx},
     parse::sgml::element::start_tag,
+    OfxRoot,
 };
 
-pub struct Deserializer<'de, 'h> {
+pub(crate) struct Deserializer<'de, 'h> {
     pub header: &'h OfxHeader<'de>,
     input: &'de str,
     skip_next_outer: bool,
@@ -40,7 +37,7 @@ pub struct Deserializer<'de, 'h> {
 
 impl<'de, 'h> Deserializer<'de, 'h> {
     /// Creates an OFX deserializer from a &str.
-    pub fn from_str(header: &'h OfxHeader<'de>, input: &'de str) -> Result<Self> {
+    pub(crate) fn from_str(header: &'h OfxHeader<'de>, input: &'de str) -> Result<Self> {
         Ok(Deserializer {
             header,
             input,
@@ -280,18 +277,15 @@ impl<'de, 'h, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de, 'h> {
     forward_to_deserialize_any! { bool bytes byte_buf identifier ignored_any }
 }
 
-pub fn from_str<'a, T>(s: &'a str) -> Result<Ofx<'a, T>>
-where
-    T: Deserialize<'a>,
-{
+pub(crate) fn from_str(s: &str) -> Result<Ofx> {
     let (s, header) = ofx_header::<VerboseError<&str>>(s).map_err(|e| match e {
         Err::Incomplete(_) => Error::ParseIncomplete,
         Err::Error(e) | Err::Failure(e) => Error::ParseError(convert_error(s, e)),
     })?;
     let mut deserializer = Deserializer::from_str(&header, s)?;
-    let ofx = T::deserialize(&mut deserializer)?;
+    let ofx = OfxRoot::deserialize(&mut deserializer)?;
 
-    if deserializer.input.is_empty() {
+    if deserializer.input.trim_start().is_empty() {
         Ok(Ofx { header, ofx })
     } else {
         Err(Error::TrailingInput)
@@ -709,6 +703,7 @@ mod tests {
     }
 
     #[test_case("UNIT"          , Ok(Enum::Unit)      , "" ; "text unit variant"            )]
+    #[test_case(" UNIT "        , Ok(Enum::Unit)      , "" ; "text unit variant with spaces")]
     #[test_case("<UNIT>"        , Ok(Enum::Unit)      , "" ; "unterminated tag unit variant")]
     #[test_case("<UNIT></UNIT>" , Ok(Enum::Unit)      , "" ; "terminated tag unit variant"  )]
     #[test_case("<NEWT>3"       , Ok(Enum::Newtype(3)), "" ; "unterminated newtype variant" )]

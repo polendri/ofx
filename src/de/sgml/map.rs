@@ -16,7 +16,7 @@ pub(super) struct MapAccess<'a, 'de: 'a, 'h: 'a> {
 }
 
 impl<'a, 'de, 'h> MapAccess<'a, 'de, 'h> {
-    pub fn new(de: &'a mut Deserializer<'de, 'h>, strip_outer: bool) -> Self {
+    pub(super) fn new(de: &'a mut Deserializer<'de, 'h>, strip_outer: bool) -> Self {
         MapAccess {
             de,
             tag: None,
@@ -47,7 +47,7 @@ impl<'a, 'de, 'h> de::MapAccess<'de> for MapAccess<'a, 'de, 'h> {
                     .map(Some)
             }
         } else {
-            match self.de.consume(any_start_tag) {
+            match self.de.consume(whitespace_preceded(any_start_tag)) {
                 Ok(name) => {
                     self.tag = Some(name);
                     seed.deserialize(BorrowedStrDeserializer::new(name))

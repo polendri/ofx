@@ -18,7 +18,7 @@ pub(super) struct VariantAccess<'a, 'de: 'a, 'h: 'a> {
 }
 
 impl<'a, 'de, 'h> VariantAccess<'a, 'de, 'h> {
-    pub fn new(de: &'a mut Deserializer<'de, 'h>, name: &'de str) -> Self {
+    pub(super) fn new(de: &'a mut Deserializer<'de, 'h>, name: &'de str) -> Self {
         VariantAccess { de, name }
     }
 }
@@ -62,7 +62,7 @@ pub(super) struct EnumAccess<'a, 'de: 'a, 'h: 'a> {
 }
 
 impl<'a, 'de, 'h> EnumAccess<'a, 'de, 'h> {
-    pub fn new(de: &'a mut Deserializer<'de, 'h>) -> Self {
+    pub(super) fn new(de: &'a mut Deserializer<'de, 'h>) -> Self {
         EnumAccess { de }
     }
 }
@@ -79,7 +79,7 @@ impl<'a, 'de, 'h> de::EnumAccess<'de> for EnumAccess<'a, 'de, 'h> {
             map(any_start_tag, Cow::Borrowed),
             elem_value,
         ))))? {
-            Cow::Borrowed(name) => Ok(name),
+            Cow::Borrowed(name) => Ok(name.trim_end()),
             _ => Err(Error::EscapesInEnumVariant),
         }?;
 
