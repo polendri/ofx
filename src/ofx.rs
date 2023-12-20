@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use time::OffsetDateTime;
 
 use self::header::OfxHeader;
 pub use self::header::*;
@@ -6,47 +7,45 @@ pub use self::header::*;
 pub mod header;
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "UPPERCASE")]
 pub enum Severity {
-    #[serde(rename = "INFO")]
     Info,
-    #[serde(rename = "WARN")]
     Warn,
-    #[serde(rename = "ERROR")]
     Error,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(rename = "STATUS")]
+#[serde(rename = "STATUS", rename_all = "UPPERCASE")]
 pub struct StatusV1<'a> {
-    #[serde(rename = "CODE")]
     pub code: i32,
-    #[serde(rename = "SEVERITY")]
     pub severity: Severity,
-    #[serde(rename = "MESSAGE")]
     pub message: &'a str,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(rename = "SONRS")]
+#[serde(rename = "SONRS", rename_all = "UPPERCASE")]
 pub struct SignonResponse<'a> {
-    #[serde(borrow, rename = "STATUS")]
-    pub status: Option<StatusV1<'a>>,
+    #[serde(borrow)]
+    pub status: StatusV1<'a>,
+    // TODO: Copy this desrializer impl https://docs.rs/time/latest/src/time/serde/iso8601.rs.html
+    //       in order to implement the OFX 1.6 3.2.8.2 page-70 datetime spec
+    pub dtserver: OffsetDateTime,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(rename = "SIGNONMSGSRSV1")]
+#[serde(rename = "SIGNONMSGSRSV1", rename_all = "UPPERCASE")]
 pub struct SignonMessageSetV1<'a> {
-    #[serde(borrow, rename = "SONRS")]
-    pub signon_response: Option<SignonResponse<'a>>,
+    #[serde(borrow)]
+    pub sonrs: Option<SignonResponse<'a>>,
 }
 
 /// An OFX response document.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
-#[serde(rename = "OFX")]
+#[serde(rename = "OFX", rename_all = "UPPERCASE")]
 pub struct OfxRoot<'a> {
     // TODO: support v2
-    #[serde(borrow, rename = "SIGNONMSGSRSV1")]
-    pub signon_message_set_v1: Option<SignonMessageSetV1<'a>>,
+    #[serde(borrow)]
+    pub signonmsgsrsv1: Option<SignonMessageSetV1<'a>>,
 }
 
 /// An OFX document.

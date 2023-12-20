@@ -1,4 +1,5 @@
 use test_case::test_case;
+use time::macros::datetime;
 
 use ofx_parse::{from_str, ofx::header::*, ofx::*, Result};
 
@@ -27,13 +28,14 @@ const HEADER: OfxHeader = OfxHeader {
     Ok(Ofx {
         header: HEADER,
         ofx: OfxRoot {
-            signon_message_set_v1: Some(SignonMessageSetV1 {
-                signon_response: Some(SignonResponse {
-                    status: Some(StatusV1 {
+            signonmsgsrsv1: Some(SignonMessageSetV1 {
+                sonrs: Some(SignonResponse {
+                    status: StatusV1 {
                         code: 0,
                         severity: Severity::Info,
                         message: "OK\n   ",
-                    }),
+                    },
+                    dtserver: datetime!(2022-07-17 16:41:44 -8),
                 })
             }),
         },
